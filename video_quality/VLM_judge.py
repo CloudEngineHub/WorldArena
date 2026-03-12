@@ -8,6 +8,7 @@ import cv2
 import torch
 import yaml
 from PIL import Image
+from tqdm import tqdm
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 DEFAULT_MODEL_PATH = "your absolute path"
@@ -32,7 +33,7 @@ def load_instruction_json(json_path):
 
         path_obj = Path(gt_path)
         if len(path_obj.parts) >= 5:
-            generated_filename = f"{path_obj.parts[-5]}_{path_obj.parts[-1].split('.')[0]}.mp4"
+            generated_filename = f"{path_obj.parts[-1].split('.')[0]}.mp4"
         else:
             base_name = os.path.basename(gt_path)
             generated_filename = f"unknown_{base_name}"
@@ -76,19 +77,22 @@ def sample_frames(video_path, num_frames=16):
 
 
 def build_multi_metric_prompt(instruction_text=None):
+    prompt = """ """
+    if instruction_text:
+        prompt += f"\n**VIDEO INSTRUCTION:** {instruction_text}\n"
     prompt = """
-You are an expert evaluator for robot interaction videos. You are evaluating videos generated for embodied AI manipulation scenarios, specifically focusing on robotic arms interacting with objects in tabletop environments.
-EVALUATION CONTEXT:
+You are an expert evaluator for robot interaction videos. You are evaluating videos generated for **embodied AI manipulation scenarios**, specifically focusing on robotic arms interacting with objects in tabletop environments.
+**EVALUATION CONTEXT:**
 - Target scenario: Robotic manipulation (e.g., pick-place, push, grasp)
-- Expected agent: Robotic arm/end-effector, NOT human hands
+- Expected agent: **Robotic arm/end-effector**, NOT human hands
 - Expected environment: Tabletop with objects, typical for robot manipulation tasks
 - Expected physics: Realistic robot-object interactions following physical laws
-CRITICAL EVALUATION PRINCIPLES:
+**CRITICAL EVALUATION PRINCIPLES:**
 1. Base ALL judgments ONLY on what is visually observable in the sampled frames
 2. DO NOT infer information not shown (no assumptions about unseen parts)
 3. Evaluate temporal coherence across the sampled frames
 4. For instruction following: Compare STRICTLY against the provided text instruction
-EVALUATION DIMENSIONS & SCORING RUBRICS:
+**EVALUATION DIMENSIONS & SCORING RUBRICS:**
 1. Interaction_Quality (Quality of robot-object interactions)
 - Score 1: Objects pass through robot or other objects; no proper contact
 - Score 2: Contact exists but interaction is unrealistic (e.g., sliding without friction, incorrect force response)
@@ -101,36 +105,52 @@ EVALUATION DIMENSIONS & SCORING RUBRICS:
 - Score 3: Reasonable 3D consistency with minor issues (e.g., slight perspective drift)
 - Score 4: Stable camera perspective with consistent depth relationships
 - Score 5: Perfect camera geometry and 3D consistency
-3. INSTRUCTION FOLLOWING (Adherence to given instruction)
-- HALLUCINATION CHECK: If the video shows human hands instead of robotic arms, score <= 2 immediately
+3. INSTRUCTION FOLLOWING (Adherence to given instruction:**VIDEO INSTRUCTION**)
+- **HALLUCINATION CHECK**: If the video shows human hands instead of robotic arms, score <= 2 immediately
 - Score 1: Completely different from instruction (wrong action, wrong objects, wrong scene)
 - Score 2: Partially related but major errors (e.g., wrong target object, incorrect manipulation type)
 - Score 3: Follows general intent but with execution errors (e.g., correct action sequence but imprecise)
 - Score 4: Mostly correct with minor deviations (e.g., slight position error, extra unnecessary motion)
 - Score 5: Perfect execution of all specified elements (action, object, scene, outcome)
-SPECIFIC ROBOT-RELATED CHECKS:
+**SPECIFIC ROBOT-RELATED CHECKS:**
 - Robotic arm should have mechanical appearance, NOT human limbs
 - End-effector (gripper) should maintain consistent form throughout interaction
 - Robot motion should show appropriate joint movement and kinematics
 - Object manipulation should respect object mass and inertia
 - Contact should be maintained appropriately during grasping/lifting
-OUTPUT FORMAT REQUIREMENTS:
+**OUTPUT FORMAT REQUIREMENTS:**
 You MUST output a SINGLE, VALID JSON object with EXACTLY three keys:
 - 'Interaction_Quality'
 - 'Perspectivity'
 - 'Instruction_Following'
 Each value must be an object with exactly two keys:
-- 'score': integer 1-5
-- 'reason': concise explanation citing SPECIFIC visual evidence from frames
-CRITICAL INSTRUCTIONS:
+- '"score"': integer 1-5
+- '"reason"': concise explanation citing SPECIFIC visual evidence from frames
+**EXAMPLE OUTPUT:**
+{
+"Interaction_Quality": {
+"score": 2,
+"reason": "Object slides without friction during pushing;
+gripper penetrates object slightly"
+},
+"Perspectivity": {
+"score": 4,
+"reason": "Stable camera perspective with consistent depth ordering"
+},
+"Instruction_Following": {
+"score": 1,
+"reason": "Video shows human hand instead of robotic arm (hallucination)"
+}
+}
+**CRITICAL INSTRUCTIONS:**
 1. Output ONLY the JSON object, no other text
 2. Base scoring on observed visual evidence only
 3. For instruction following: Strictly compare with the provided instruction
 4. Consider temporal coherence across all sampled frames
 5. Penalize hallucinations (e.g., human hands instead of robot) heavily
+Now evaluate the provided video frames based on the above criteria.
 """
-    if instruction_text:
-        prompt += f"\nVIDEO INSTRUCTION: {instruction_text}\n"
+
     return prompt
 
 
@@ -215,7 +235,7 @@ def vlm_judge(model_name, video_dir, summary_json, output_root, tmp_root, metric
     videos.sort()
 
     results = []
-    for video_path in videos:
+    for video_path in tqdm(videos, desc=f"{model_name} evaluating", ncols=100):
         item = {"video": os.path.basename(video_path), "metrics": {}, "raw_response_file": None, "error": None}
         frames = sample_frames(video_path, num_frames=num_frames)
         if not frames:
@@ -247,7 +267,7 @@ def vlm_judge(model_name, video_dir, summary_json, output_root, tmp_root, metric
         results.append(item)
 
     # Save final aggregated results
-    out_dir = os.path.join(output_root, model_name.lower())
+    out_dir = os.path.join(output_root, model_name)
     os.makedirs(out_dir, exist_ok=True)
     out_file = os.path.join(out_dir, f"{model_name}_summary_val_all_intern.json")
     with open(out_file, "w", encoding="utf-8") as f:

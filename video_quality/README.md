@@ -14,8 +14,26 @@ Used for standard metrics and action following.
 cd WorldArena
 conda create -y -n WorldArena python=3.10
 conda activate WorldArena
+
+pip install -U pip
+pip install "setuptools<81" wheel
+pip install --no-build-isolation mmcv==2.2.0
+# requirements.txt pins:
+# - transformers==4.37.2 (compatible with pyiqa==0.1.14.1)
+# - numpy==1.26.0 (compatible with sam3==0.1.0)
 pip install -r video_quality/requirements.txt
+pip install ipython
+pip install ninja
+pip install mamba-ssm
+pip install transformers==4.51.3
 # Optional: pip install jupyter notebook jupyterlab
+```
+
+If you still hit install issues from a stale build cache, clear cache and retry:
+```bash
+pip cache purge
+pip install --no-build-isolation mmcv==2.2.0
+pip install --no-cache-dir -r video_quality/requirements.txt
 ```
 
 ### 3. VLM Environment `WorldArena_VLM`
@@ -28,9 +46,7 @@ conda activate WorldArena_VLM
 pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
 # VLM dependencies
 pip install -r video_quality/requirements_worldarena_vlm.txt
-# Required libs not listed in the slim deps
-pip install PyYAML==6.0.3 Pillow==10.0.0
-# If you need local wheels (flash-attn etc.), uncomment and set paths in requirements_worldarena_vlm.txt
+pip install git+https://github.com/huggingface/transformers.git
 ```
 
 ### 4. JEPA Environment `WorldArena_JEPA`
@@ -39,7 +55,7 @@ Used for JEPA similarity.
 cd WorldArena
 conda create -y -n WorldArena_JEPA python=3.10
 conda activate WorldArena_JEPA
-pip install -r requirements_jedi.txt
+pip install -r video_quality/requirements_jedi.txt
 # Download weights to video_quality/JEDi/pretrained_models/
 mkdir -p video_quality/JEDi/pretrained_models
 cd video_quality/JEDi/pretrained_models
@@ -56,12 +72,12 @@ wget -O ssv2-probe.pth.tar https://dl.fbaipublicfiles.com/jepa/vith16/ssv2-probe
     "image": "/path/to/gt_frames/episode40.png",
     "prompt": [
       "Lift the narrow-necked bottle using the right arm and hold upright"(this is from the instruction text of Robotwin 2.0 dataset)
-    ]
+    ](to better inference and evaluate, you can choose to add a prefix "In a fixed robotic workspace, generate a rigid, physically consistent embodied robotic arm. The arm maintains high stability with no deformation and enters the frame to" when you train, inference and evaluate the world model)
   },
     ...
 ]
 ```
-- Generated video directory must be named `modelname_sort`; put only videos inside, named `{taskname}_episode_{xx}.mp4`; no subfolders allowed.
+- Generated video directory must be named `modelname_test`; put only videos inside, named `{taskname}_episode_{xx}.mp4`; no subfolders allowed.
 
 ### 6. External Weights / Paths
 Configure local weights and I/O paths in [config](config/config.yaml) (do not change model_name: test):
@@ -70,11 +86,13 @@ Configure local weights and I/O paths in [config](config/config.yaml) (do not ch
 For the first two evaluations, directly use the generated video directory and summary_json; JEPA requires a GT video directory (only .mp4 files following naming rules, no nesting).
 - VLM metrics (interaction quality, perspectivity, instruction following) (requires `WorldArena_VLM` env):
 ```bash
-bash video_quality/run_VLM_judge.sh <MODEL_NAME> <VIDEO_DIR> <SUMMARY_JSON> 
+cd video_quality
+bash run_VLM_judge.sh <MODEL_NAME> <VIDEO_DIR> <SUMMARY_JSON> 
 ```
 - JEPA similarity (requires `WorldArena_JEPA` env):
 ```bash
-bash video_quality/run_evaluation_JEPA.sh
+cd video_quality
+bash run_evaluation_JEPA.sh <VIDEO_DIR>
 ```
 The following metrics first run a format preprocessing step (the bash already includes it), producing the structure under data_action_following configured in config:
 ```
@@ -114,16 +132,18 @@ Videos in subfolders 2 and 3 can be created by modifying the original prompt to 
 
 Use these two prompts to generate two new action videos. If the action-guided video lacks a modifiable prompt, consider using other actions from the same task to achieve different actions.
 
-Name the three directories `modelname_sort` `modelname_1_sort` `modelname_2_sort`:
+Name the three directories `modelname_test` `modelname_test_1` `modelname_test_2`:
 
 - action following (requires `WorldArena` env):
 ```bash
-bash video_quality/run_action_following.sh <MODEL_NAME> <GEN_VIDEO_DIR> <SUMMARY_JSON>
+cd video_quality
+bash run_action_following.sh <MODEL_NAME> <GEN_VIDEO_DIR> <SUMMARY_JSON>
 # If using a specific split, run preprocess_datasets_diversity.py first, or ensure config data_action_following path exists
 ```
 - Other metrics (requires `WorldArena` env):
 ```bash
-bash video_quality/run_evaluation.sh <MODEL_NAME> <GEN_VIDEO_DIR> <SUMMARY_JSON> <METRIC_LIST> 
+cd video_quality
+bash run_evaluation.sh <MODEL_NAME> <GEN_VIDEO_DIR> <SUMMARY_JSON> <METRIC_LIST> 
 ```
 
 - Metric aggregation (requires `WorldArena` env):
@@ -131,3 +151,5 @@ bash video_quality/run_evaluation.sh <MODEL_NAME> <GEN_VIDEO_DIR> <SUMMARY_JSON>
 python video_quality/csv_results/aggregate_results.py --model_name <MODEL_NAME> --base_dir . --csv_name aggregated_results.csv
 ```
 You can view all metric results under the csv_results directory.
+
+
